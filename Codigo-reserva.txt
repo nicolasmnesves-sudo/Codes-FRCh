@@ -1,0 +1,117 @@
+package frc.robot;
+
+import com.ctre.phoenix.motorcontrol.can.WPI_VictorSPX;
+import com.revrobotics.spark.SparkMax;
+import com.revrobotics.spark.SparkLowLevel.MotorType;
+import com.revrobotics.spark.config.SparkBaseConfig.IdleMode;
+import com.revrobotics.PersistMode;
+import com.revrobotics.RelativeEncoder;
+import com.revrobotics.ResetMode;
+import com.revrobotics.spark.config.SparkMaxConfig;
+
+import edu.wpi.first.math.controller.ArmFeedforward; // Import da biblioteca de Feedforward específica para braço
+import edu.wpi.first.math.controller.PIDController;
+import edu.wpi.first.wpilibj.Joystick;
+import edu.wpi.first.wpilibj.TimedRobot;
+import edu.wpi.first.wpilibj.Timer;
+
+public class Robot extends TimedRobot {
+
+  SparkMaxConfig config = new SparkMaxConfig();
+
+  // Tração
+  WPI_VictorSPX frontLeft  = new WPI_VictorSPX(3);
+  WPI_VictorSPX backLeft   = new WPI_VictorSPX(4);
+  WPI_VictorSPX frontRight = new WPI_VictorSPX(1);
+  WPI_VictorSPX backRight  = new WPI_VictorSPX(2);
+
+  // Braço
+  SparkMax armMotor = new SparkMax(5, MotorType.kBrushless);
+  RelativeEncoder armEncoder = armMotor.getEncoder();
+
+  // PID ajustado: P aumentado para dar força de arranque, I zerado e D adicionado como amortecedor
+  PIDController armPID = new PIDController(0.07, 0.00, 0.007);
+
+  
+  // Feedforward inteligente: usa ks (atrito), kg (gravidade) e kv (velocidade)
+  // Deixamos ks e kv zerados por enquanto e aplicamos 0.05 para compensar o peso da gravidade
+  ArmFeedforward armFF = new ArmFeedforward(0.0, 0.05, 0.0);
+
+
+  // Posições
+  final double ARM_BAIXO = -0.350;
+  final double ARM_MEDIO = 1.150;
+  final double ARM_CIMA  = 2.900;
+
+  double armSetpoint = ARM_MEDIO;
+
+  Joystick driverJoystick = new Joystick(0);
+  Timer timer = new Timer();
+
+  @Override
+  public void robotInit() {
+    config.idleMode(IdleMode.kBrake);
+        
+    // Aplica as configurações iniciais de modo de freio no motor
+    armMotor.configure(
+        config,
+        ResetMode.kNoResetSafeParameters,
+        PersistMode.kNoPersistParameters
+    );
+  }
+
+  @Override
+  public void teleopPeriodic() {
+
+    // Tração
+    double speed = driverJoystick.getRawAxis(1) * 0.2;
+    double turn  = driverJoystick.getRawAxis(4) * 0.2;
+
+    double left = (speed + turn) * 2;
+    double right = (speed - turn) * 2;
+
+    frontLeft.set(left);
+    backLeft.set(left);
+    frontRight.set(-right);
+    backRight.set(-right);
+
+    // Botões do joystick
+    if (driverJoystick.getRawButtonPressed(1)) {
+      armSetpoint = ARM_BAIXO;
+      armPID.setTolerance(0.02);
+      System.out.println("Baixo");
+    }
+
+    if (driverJoystick.getRawButtonPressed(2)) {
+      armSetpoint = ARM_MEDIO;
+      armPID.setTolerance(0.02);
+      System.out.println("Medio");
+    }
+
+    if (driverJoystick.getRawButtonPressed(3)) {
+      armSetpoint = ARM_CIMA;
+      armPID.setTolerance(0.02);
+      System.out.println("Alto");
+    }
+
+    // --- CONTROLE INTELIGENTE DO BRAÇO ---
+    
+    // 1. Lê a posição atual do encoder
+    double currentPosition = armEncoder.getPosition();
+
+    // 2. Calcula a força necessária pelo PID (Ajuste de posição rápido)
+    double pidOutput = armPID.calculate(currentPosition, armSetpoint);
+
+    // 3. Calcula a força física necessária para anular a gravidade naquele ângulo exato
+    double ffOutput = armFF.calculate(currentPosition, 0); 
+
+    // 4. Combina as duas forças (PID + Feedforward)
+    double totalOutput = pidOutput + ffOutput;
+
+    // 5. Limita a potência final para proteger o mecanismo
+    totalOutput = Math.max(-0.4, Math.min(0.4, totalOutput));
+
+    // 6. Envia o sinal combinado para o motor do braço
+    armMotor.set(totalOutput);
+  }
+}
